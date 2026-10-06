@@ -2,18 +2,20 @@ name: pull-shark
 
 on:
   schedule:
-    - cron: '7,37 * * * *'   # every 30 minutes (UTC)
-  workflow_dispatch:          # allows manual runs from the Actions tab
+    - cron: '7,37 * * * *' # every 30 minutes (UTC)
+  workflow_dispatch:       # allows manual runs from the Actions tab
 
-concurrency: pull-shark       # prevent overlapping runs
+concurrency: pull-shark   # prevent overlapping runs
 
 jobs:
   run:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.PAT }}
-      PER_RUN: 65       # PRs per run (65 x 2 runs/hour = 130/hour => ~8 hours to 1024)
-      TARGET: 1024      # stops once this many PRs have been merged
+      PER_RUN: 65
+      TARGET: 1024
+      PAIR_TARGET: 48   # co-author the next 48 PRs (Pair Extraordinaire Gold)
+      CO_AUTHOR: "Aditya Sharma <67048929+extinctsion@users.noreply.github.com>"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +47,15 @@ jobs:
             echo "$n" > count.txt
             echo "- $(date -u +%Y-%m-%dT%H:%M:%SZ) #$n" >> log.md
             git add count.txt log.md
-            git commit -q -m "Update log #$n"
+
+            p=$(cat pair.txt 2>/dev/null || echo 0)
+            if [ "$p" -lt "$PAIR_TARGET" ]; then
+              echo "$((p + 1))" > pair.txt
+              git add pair.txt
+              git commit -q -m "Update log #$n" -m "Co-authored-by: $CO_AUTHOR"
+            else
+              git commit -q -m "Update log #$n"
+            fi
             git push -q origin "$branch"
 
             gh pr create --base "$base" --head "$branch" \
