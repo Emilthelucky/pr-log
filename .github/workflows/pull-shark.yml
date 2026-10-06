@@ -1,0 +1,57 @@
+name: pull-shark
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'   # every 30 minutes (UTC)
+  workflow_dispatch:          # allows manual runs from the Actions tab
+
+concurrency: pull-shark       # prevent overlapping runs
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PAT }}
+      PER_RUN: 65       # PRs per run (65 x 2 runs/hour = 130/hour => ~8 hours to 1024)
+      TARGET: 1024      # stops once this many PRs have been merged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT }}
+          fetch-depth: 0
+
+      - name: Create and merge PRs
+        run: |
+          set -e
+          login=$(gh api user -q .login)
+          id=$(gh api user -q .id)
+          git config user.name "$login"
+          git config user.email "${id}+${login}@users.noreply.github.com"
+          base=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+
+          for i in $(seq 1 "$PER_RUN"); do
+            git checkout -q "$base"
+            git pull -q origin "$base"
+
+            n=$(cat count.txt 2>/dev/null || echo 0)
+            if [ "$n" -ge "$TARGET" ]; then
+              echo "Target reached: $n"
+              exit 0
+            fi
+            n=$((n + 1))
+            branch="pr-$n-$(date +%s)"
+
+            git checkout -q -b "$branch"
+            echo "$n" > count.txt
+            echo "- $(date -u +%Y-%m-%dT%H:%M:%SZ) #$n" >> log.md
+            git add count.txt log.md
+            git commit -q -m "Update log #$n"
+            git push -q origin "$branch"
+
+            gh pr create --base "$base" --head "$branch" \
+              --title "Update log #$n" --body "Automated update #$n"
+            gh pr merge "$branch" --merge --delete-branch
+
+            echo "PR #$n merged"
+            sleep 6
+          done
